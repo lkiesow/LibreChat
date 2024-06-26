@@ -6,6 +6,7 @@ const logger = require('~/utils/logger');
 const {
   LDAP_URL,
   LDAP_BIND_DN,
+  LDAP_BIND_DN_PATTERN,
   LDAP_BIND_CREDENTIALS,
   LDAP_USER_SEARCH_BASE,
   LDAP_SEARCH_FILTER,
@@ -42,32 +43,46 @@ if (LDAP_USERNAME) {
   searchAttributes.push(LDAP_USERNAME);
 }
 
-const ldapOptions = {
-  server: {
-    url: LDAP_URL,
-    bindDN: LDAP_BIND_DN,
-    bindCredentials: LDAP_BIND_CREDENTIALS,
-    searchBase: LDAP_USER_SEARCH_BASE,
-    searchFilter: LDAP_SEARCH_FILTER || 'mail={{username}}',
-    searchAttributes: [...new Set(searchAttributes)],
-    ...(LDAP_CA_CERT_PATH && {
-      tlsOptions: {
-        ca: (() => {
-          try {
-            return [fs.readFileSync(LDAP_CA_CERT_PATH)];
-          } catch (err) {
-            logger.error('[ldapStrategy]', 'Failed to read CA certificate', err);
-            throw err;
-          }
-        })(),
+const getLDAPConfiguration = (req, callback) => {
+  // Fetching things from database or whatever
+  process.nextTick(function () {
+    logger.warn(req?.body);
+    const username = req.body.email.replace(/@.*$/, '');
+    const bindDN =
+      LDAP_BIND_DN ??
+      LDAP_BIND_DN_PATTERN.replace('{{username}}', username).replace('{{email}}', req.body.email);
+    const bindCredentials = LDAP_BIND_DN ? LDAP_BIND_CREDENTIALS : req.body.password;
+    var opts = {
+      server: {
+        url: LDAP_URL,
+        bindDN: bindDN,
+        bindCredentials: bindCredentials,
+        searchBase: LDAP_USER_SEARCH_BASE,
+        searchFilter: LDAP_SEARCH_FILTER || 'mail={{username}}',
+        searchAttributes: [...new Set(searchAttributes)],
+        ...(LDAP_CA_CERT_PATH && {
+          tlsOptions: {
+            ca: (() => {
+              try {
+                return [fs.readFileSync(LDAP_CA_CERT_PATH)];
+              } catch (err) {
+                logger.error('[ldapStrategy]', 'Failed to read CA certificate', err);
+                throw err;
+              }
+            })(),
+          },
+        }),
       },
-    }),
-  },
-  usernameField: 'email',
-  passwordField: 'password',
+      usernameField: 'email',
+      passwordField: 'password',
+    };
+    logger.warn(opts);
+
+    callback(null, opts);
+  });
 };
 
-const ldapLogin = new LdapStrategy(ldapOptions, async (userinfo, done) => {
+const ldapLogin = new LdapStrategy(getLDAPConfiguration, async (userinfo, done) => {
   if (!userinfo) {
     return done(null, false, { message: 'Invalid credentials' });
   }
